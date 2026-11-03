@@ -1,0 +1,300 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>突出部之矛 桌面战场</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
+<style>
+/* 版式：全屏 3D 桌面为底，顶部是作战态势条，右侧是可折叠的参谋板，左侧是兵力盒 */
+:root{
+  --table:#1b1712; --panel:#1f231a; --panel-2:#272c20; --line:#3d4431;
+  --ink:#ece6d2; --muted:#a39d84; --brass:#c9a44c; --us:#8d9562; --ge:#b0382f; --good:#7fae6a; --warn:#d99a3a;
+  --f-label:"Saira Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--table);color:var(--ink);font:14px/1.5 var(--f-body);overflow:hidden}
+#stage{position:fixed;inset:0;touch-action:none}
+#stage canvas{display:block;width:100%;height:100%;outline:none}
+button,input,select{font:inherit;color:inherit}
+.btn{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--brass)}
+.btn:focus-visible,.tab:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--brass);outline-offset:1px}
+.btn.primary{background:var(--brass);color:#1b1712;border-color:var(--brass);font-weight:700}
+.btn.danger{border-color:#6b2b26}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.label{font-family:var(--f-label);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-size:12px}
+.num{font-family:var(--f-label);font-variant-numeric:tabular-nums}
+
+/* 顶部态势条 */
+#topbar{position:fixed;top:0;left:0;right:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  padding:calc(8px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px));
+  background:linear-gradient(180deg,rgba(18,20,14,.94),rgba(18,20,14,.75));border-bottom:1px solid var(--line);z-index:5}
+#brand{display:flex;flex-direction:column;line-height:1.1;margin-right:6px}
+#brand b{font-size:16px;letter-spacing:.04em}
+#brand span{font-family:var(--f-label);font-size:11px;letter-spacing:.14em;color:var(--brass)}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--panel)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--good)} .dot.warn{background:var(--warn)}
+#turnbox{display:flex;align-items:center;gap:8px}
+#turnNum{font-family:var(--f-label);font-size:22px;font-weight:700;color:var(--brass);min-width:1.4em;text-align:center}
+#phaseName{font-weight:700}
+#weather{font-size:12px}
+.spacer{flex:1}
+#sideSel{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+#sideSel button{border:0;background:transparent;padding:4px 10px;cursor:pointer}
+#sideSel button[aria-pressed="true"][data-side="US"]{background:var(--us);color:#11140c;font-weight:700}
+#sideSel button[aria-pressed="true"][data-side="GE"]{background:var(--ge);color:#fff;font-weight:700}
+#sideSel button[aria-pressed="true"][data-side="OBS"]{background:var(--panel-2);font-weight:700}
+#peers{display:flex;gap:6px;flex-wrap:wrap}
+
+/* 左侧兵力盒 / 右侧参谋板 */
+.dock{position:fixed;z-index:4;background:rgba(31,35,26,.95);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;flex-direction:column;max-height:calc(100% - 140px)}
+#left{left:max(12px,env(safe-area-inset-left,0px));top:84px;width:228px}
+#right{right:max(12px,env(safe-area-inset-right,0px));top:84px;width:340px}
+.dock header{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--line);gap:8px}
+.dock .body{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.dock.collapsed .body,.dock.collapsed .tabs{display:none}
+.group{display:flex;flex-direction:column;gap:6px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.markers{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.mk{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);cursor:pointer;font-size:12px}
+.mk i{width:22px;height:22px;border-radius:50%;display:block;border:2px solid rgba(0,0,0,.35)}
+.mk:hover{border-color:var(--brass)}
+.hint{font-size:12px;color:var(--muted)}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tab{flex:1;background:none;border:0;border-bottom:2px solid transparent;padding:8px 4px;cursor:pointer;color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--brass);font-weight:700}
+.pane[hidden]{display:none}
+
+/* 战斗计算 */
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:stretch}
+.slot{border:1px dashed var(--line);border-radius:8px;padding:8px;min-height:84px;display:flex;flex-direction:column;gap:4px}
+.slot.filled{border-style:solid}
+.slot.att{border-color:#7a3a30} .slot.def{border-color:#4f5a3a}
+.slot b{font-size:13px}
+.slot .stat{font-family:var(--f-label);font-size:20px;font-weight:700}
+.vsmark{align-self:center;font-family:var(--f-label);color:var(--brass);font-weight:700}
+.mods{font-size:12px;display:flex;flex-direction:column;gap:2px}
+.mods div{display:flex;justify-content:space-between;gap:6px}
+.mods .neg{color:#e07a6e} .mods .pos{color:#a8c98f}
+.stepper{display:flex;align-items:center;gap:4px}
+.stepper button{width:24px;height:24px;padding:0;border-radius:4px}
+.stepper output{min-width:2ch;text-align:center}
+#result{border:1px solid var(--brass);border-radius:8px;padding:10px;background:#2b2a1d;display:flex;flex-direction:column;gap:6px}
+#result .big{font-family:var(--f-label);font-size:28px;font-weight:700;color:var(--brass);line-height:1}
+.mode{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mode button{flex:1;border:0;background:transparent;padding:5px;cursor:pointer}
+.mode button[aria-pressed="true"]{background:var(--panel-2);color:var(--brass);font-weight:700}
+
+/* 回合 / 胜利点 / 速查 / 日志 */
+.phases{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.phases li{border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px}
+.phases li.now{border-color:var(--brass);background:#2b2a1d}
+.phases li small{display:block;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+td,th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+th{font-family:var(--f-label);letter-spacing:.05em;color:var(--muted);font-weight:600}
+.vp{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.vpcard{border:1px solid var(--line);border-radius:8px;padding:8px}
+.vpcard .num{font-size:30px;font-weight:700}
+.ctrl{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.ctrl .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ctrl .seg button{border:0;background:transparent;padding:2px 8px;cursor:pointer}
+.ctrl .seg button[aria-pressed="true"][data-v="US"]{background:var(--us);color:#11140c}
+.ctrl .seg button[aria-pressed="true"][data-v="GE"]{background:var(--ge);color:#fff}
+#log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12.5px}
+#log li{border-left:3px solid var(--line);padding:2px 8px}
+#log li.US{border-color:var(--us)} #log li.GE{border-color:var(--ge)}
+#log time{color:var(--muted);font-family:var(--f-label);margin-right:6px}
+
+/* 悬停信息卡 / 选中工具条 / 提示 */
+#card{position:fixed;z-index:6;pointer-events:none;max-width:260px;background:rgba(20,22,16,.96);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.5px;box-shadow:0 8px 20px rgba(0,0,0,.5)}
+#card b{font-size:13.5px}
+#card .num{font-size:16px;color:var(--brass)}
+#selbar{position:fixed;z-index:5;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;flex-wrap:wrap;justify-content:center;
+  background:rgba(31,35,26,.96);border:1px solid var(--line);border-radius:10px;padding:8px;max-width:calc(100% - 32px)}
+#toast{position:fixed;z-index:7;left:50%;top:84px;transform:translateX(-50%);background:var(--brass);color:#1b1712;font-weight:700;border-radius:8px;padding:6px 14px;pointer-events:none;transition:opacity .3s}
+#loading{position:fixed;inset:0;z-index:9;display:grid;place-items:center;background:var(--table)}
+#loading div{text-align:center;display:flex;flex-direction:column;gap:8px}
+#loading b{font-size:20px} #loading span{color:var(--muted)}
+#help{font-size:12px;color:var(--muted);line-height:1.7}
+kbd{font-family:var(--f-label);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--ink)}
+#mobileBar{display:none}
+/* 规则书阅读器 */
+#book{position:fixed;inset:0;z-index:8;background:rgba(14,13,10,.94);display:flex;flex-direction:column}
+#bookBar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));border-bottom:1px solid var(--line);background:var(--panel)}
+#bookBar b{font-size:15px}
+#bookPages{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;gap:18px;padding:20px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
+.bpage{background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.5);width:min(900px,100%);position:relative}
+.bpage canvas{display:block;width:100%;height:auto}
+.bpage .ph{position:absolute;inset:0;display:grid;place-items:center;color:#888;font-family:var(--f-label)}
+#bookMsg{color:var(--muted);padding:40px;text-align:center}
+@media (max-width:820px){
+  #left,#right{left:max(8px,env(safe-area-inset-left,0px));right:max(8px,env(safe-area-inset-right,0px));width:auto;top:auto;bottom:calc(64px + env(safe-area-inset-bottom,0px));max-height:55%}
+  #left.mclosed,#right.mclosed{display:none}
+  #mobileBar{display:flex;position:fixed;z-index:5;left:max(8px,env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));gap:6px}
+  #selbar{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+  #brand span,#weather{display:none}
+}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+
+<div id="stage" aria-label="三维桌面：地图与算子"></div>
+
+<header id="topbar">
+  <div id="brand"><b>突出部之矛：阿登 1944</b><span>SPEARHEAD OF THE BULGE · TABLE</span></div>
+  <div id="turnbox" class="chip">
+    <span class="label">回合</span><span id="turnNum" class="num">1</span>
+    <span id="phaseName">准备阶段</span>
+    <span id="weather" class="label">浓雾/暴雪</span>
+    <button class="btn" id="nextPhase" title="进入下一阶段">下一阶段 ▸</button>
+  </div>
+  <button class="btn" id="bookBtn" data-pdf="/_blob/7f88c470686a6e3cb4e326d5bcfed646" title="打开最终修订版规则书">规则书</button>
+  <div class="spacer"></div>
+  <div id="peers" aria-label="在场玩家"></div>
+  <div id="sideSel" role="group" aria-label="我方阵营">
+    <button data-side="US" aria-pressed="false">美军</button>
+    <button data-side="GE" aria-pressed="false">德军</button>
+    <button data-side="OBS" aria-pressed="true">观战</button>
+  </div>
+  <span class="chip" id="sync"><i class="dot" id="syncDot"></i><span id="syncText">连接中…</span></span>
+</header>
+
+<aside id="left" class="dock" aria-label="兵力盒">
+  <header><span class="label">兵力盒 · 对局</span><button class="btn" data-collapse="left" aria-expanded="true">收起</button></header>
+  <div class="body">
+    <div class="group">
+      <span class="label">对局</span>
+      <div class="row"><label for="tableId" class="hint">对局代码</label><input id="tableId" size="8" maxlength="16" style="width:96px;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 6px"><button class="btn" id="joinTable">进入</button></div>
+      <div class="row"><button class="btn primary" id="setupBtn">按剧本布置</button><button class="btn" id="viewBtn">视角复位</button></div>
+      <div class="row" id="resetRow"><button class="btn danger" id="resetBtn">清空重开</button></div>
+      <div class="row" id="resetConfirm" hidden><span class="hint">清空当前对局？</span><button class="btn danger" id="resetYes">确定</button><button class="btn" id="resetNo">取消</button></div>
+    </div>
+    <div class="group">
+      <span class="label">标记（点击放到选中算子上，或放进标记盒）</span>
+      <div class="markers" id="markerBtns"></div>
+    </div>
+    <div class="group">
+      <span class="label">掷骰</span>
+      <div class="row"><button class="btn" id="roll1">掷 1 枚</button><button class="btn" id="roll2">掷 2 枚</button></div>
+      <div class="hint" id="freeRoll">也可以直接点桌上的红骰（攻方）、白骰（守方）投掷，按住可以拖动。</div>
+    </div>
+    <div id="help">
+      <span class="label">操作</span><br>
+      左键拖动算子：移动（落下时吸附到格中心）<br>
+      左键拖动桌面：平移 · 右键拖动：旋转视角 · 滚轮：缩放<br>
+      点选算子后：<kbd>F</kbd> 翻面 · <kbd>X</kbd> 移入损失盒 · <kbd>A</kbd>/<kbd>D</kbd> 设为攻方/守方
+    </div>
+  </div>
+</aside>
+
+<aside id="right" class="dock" aria-label="参谋板">
+  <header><span class="label">参谋板</span><button class="btn" data-collapse="right" aria-expanded="true">收起</button></header>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-tab="combat">战斗</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="turn">回合</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="vp">胜利点</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="ref">速查</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="logp">记录</button>
+  </div>
+  <div class="body">
+    <section class="pane" data-pane="combat">
+      <div class="group">
+        <div class="mode" role="group" aria-label="战斗类型"><button data-mode="assault" aria-pressed="true">直接战斗</button><button data-mode="arty" aria-pressed="false">炮击</button></div>
+        <div class="vs">
+          <div class="slot att" id="attSlot"><span class="label">攻方 / 炮兵</span><span class="hint">点选算子后按 A，或点这里再点算子</span></div>
+          <span class="vsmark">VS</span>
+          <div class="slot def" id="defSlot"><span class="label">守方 / 目标</span><span class="hint">点选算子后按 D</span></div>
+        </div>
+        <div class="vs">
+          <div class="mods" id="attMods"></div><span></span><div class="mods" id="defMods"></div>
+        </div>
+        <div class="row" style="justify-content:space-between">
+          <span class="hint">攻方额外修正</span><span class="stepper"><button class="btn" data-step="att" data-d="-1">−</button><output id="attExtra">0</output><button class="btn" data-step="att" data-d="1">+</button></span>
+          <span class="hint">守方额外修正</span><span class="stepper"><button class="btn" data-step="def" data-d="-1">−</button><output id="defExtra">0</output><button class="btn" data-step="def" data-d="1">+</button></span>
+        </div>
+        <label class="hint row" id="obsRow" hidden><input type="checkbox" id="obsAdj"> 观察哨与目标相邻（炮击骰 +1）</label>
+        <div class="row"><button class="btn primary" id="rollCombat" disabled>掷骰结算</button><button class="btn" id="swapBtn">交换</button><button class="btn" id="clearBtn">清空</button></div>
+        <div id="result" hidden></div>
+      </div>
+    </section>
+    <section class="pane" data-pane="turn" hidden>
+      <div class="group">
+        <div class="row"><button class="btn" id="prevPhase">◂ 上一阶段</button><button class="btn primary" id="nextPhase2">下一阶段 ▸</button></div>
+        <div class="row"><button class="btn" id="rollWeather">掷天气</button><button class="btn" id="rollFuel">燃油检定</button><button class="btn" id="rollAir">P-47 空袭</button></div>
+        <ol class="phases" id="phaseList"></ol>
+      </div>
+    </section>
+    <section class="pane" data-pane="vp" hidden>
+      <div class="group">
+        <div class="vp">
+          <div class="vpcard"><span class="label">德军 GVP</span><div class="num" id="gvp">0</div></div>
+          <div class="vpcard"><span class="label">美军 AVP</span><div class="num" id="avp">0</div></div>
+        </div>
+        <div id="outcome" class="chip" style="justify-content:center"></div>
+        <span class="label">胜利点城镇控制</span>
+        <div id="ctrlList" class="group"></div>
+        <table id="vpTable"></table>
+        <p class="hint">控制权在一方算子落进要点城镇时自动更新，也可以手动改。脱离的德军单位请拖进地图左侧的“脱离区”，被消灭的单位拖进下方损失盒。</p>
+      </div>
+    </section>
+    <section class="pane" data-pane="ref" hidden>
+      <div class="group">
+        <span class="label">战斗结果表（优势差 = 攻方 A+D6+修正 − 守方 D+D6+修正）</span>
+        <table><tr><th>优势差</th><th>结果</th></tr>
+          <tr><td class="num">≤ −5</td><td>攻方受 1 点损伤</td></tr><tr><td class="num">−4 ~ −3</td><td>攻方后撤 1 格</td></tr>
+          <tr><td class="num">−2 ~ −1</td><td>无结果</td></tr><tr><td class="num">0 ~ +1</td><td>F 守方疲劳</td></tr>
+          <tr><td class="num">+2</td><td>R1 后撤 1 格</td></tr><tr><td class="num">+3</td><td>D1 + R1</td></tr>
+          <tr><td class="num">+4</td><td>D1 + R2</td></tr><tr><td class="num">+5</td><td>D2</td></tr><tr><td class="num">≥ +6</td><td>D2 + R1</td></tr></table>
+        <p class="hint">暴击：攻方掷出 6 且优势差 ≥ +2，结果沿表提升一级（最高 D2+R1）。攻方结算后一律疲劳。</p>
+        <span class="label">炮击结果表</span>
+        <table><tr><th>优势差</th><th>结果</th></tr>
+          <tr><td class="num">≤ 0</td><td>无</td></tr><tr><td class="num">+1</td><td>P1 疲劳</td></tr><tr><td class="num">+2</td><td>P1 + X（后撤 1 格）</td></tr>
+          <tr><td class="num">+3</td><td>D1 + P1</td></tr><tr><td class="num">+4</td><td>P2 + X</td></tr><tr><td class="num">+5</td><td>D1 + X</td></tr><tr><td class="num">≥ +6</td><td>D1 + A（相邻单位一并疲劳）</td></tr></table>
+        <span class="label">地形</span>
+        <table><tr><th>地形</th><th>MP</th><th>防御</th><th>攻击</th></tr>
+          <tr><td>平原</td><td>1</td><td>0</td><td>0</td></tr><tr><td>道路</td><td>½</td><td>0</td><td>0</td></tr>
+          <tr><td>森林</td><td>2 / 装甲 3</td><td>+1（步兵、工兵）</td><td>0</td></tr><tr><td>高地</td><td>3</td><td>+1</td><td>+1（攻低地）</td></tr>
+          <tr><td>城镇</td><td>1</td><td>+2</td><td>0</td></tr><tr><td>河流格边</td><td>不可跨越</td><td>+1</td><td>−1</td></tr><tr><td>桥梁</td><td>2</td><td>0</td><td>0</td></tr></table>
+        <p class="hint">疲劳：A −1、D −1、MP −1，不能主动进攻。攻方疲劳在对方下一个行动阶段结束时移除；其他疲劳在本方下一个行动阶段结束时移除。</p>
+      </div>
+    </section>
+    <section class="pane" data-pane="logp" hidden>
+      <ol id="log"></ol>
+    </section>
+  </div>
+</aside>
+
+<div id="book" hidden role="dialog" aria-label="规则书">
+  <div id="bookBar">
+    <b>突出部之矛：阿登 1944 · 规则书（最终修订版）</b>
+    <span class="spacer"></span>
+    <button class="btn" id="bookPrev">上一页</button>
+    <span class="num" id="bookPage">– / –</span>
+    <button class="btn" id="bookNext">下一页</button>
+    <button class="btn" id="bookSave" hidden>下载 PDF</button>
+    <button class="btn primary" id="bookClose">关闭</button>
+  </div>
+  <div id="bookPages"><div id="bookMsg">正在载入规则书……</div></div>
+</div>
+
+<div id="mobileBar"><button class="btn" data-m="left">兵力盒</button><button class="btn" data-m="right">参谋板</button></div>
+<div id="selbar" hidden></div>
+<div id="card" hidden></div>
+<div id="toast" style="opacity:0"></div>
+<div id="loading"><div><b>正在铺开地图……</b><span id="loadMsg">载入三维引擎与地图贴图</span></div></div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+  "cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+}}
+</script>
+<script type="module" src="app.js"></script>
