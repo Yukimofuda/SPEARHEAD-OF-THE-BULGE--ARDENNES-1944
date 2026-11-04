@@ -79,6 +79,11 @@ button,input,select{font:inherit;color:inherit}
 .slot.att{border-color:#7a3a30} .slot.def{border-color:#4f5a3a}
 .slot b{font-size:13px}
 .slot .stat{font-family:var(--f-label);font-size:20px;font-weight:700}
+.arow{display:flex;justify-content:space-between;align-items:center;gap:4px;border-left:2px solid transparent;padding-left:5px}
+.arow.cur{border-left-color:var(--brass)} .arow.done{opacity:.55}
+.arow .btn.x{padding:0 6px;min-height:0;line-height:18px}
+#cmpRow .btn{padding:2px 6px;font-size:12px}
+#card .stk{margin-top:6px;border-top:1px solid var(--line);padding-top:4px;display:flex;flex-direction:column;gap:2px}
 .vsmark{align-self:center;font-family:var(--f-label);color:var(--brass);font-weight:700}
 .mods{font-size:12px;display:flex;flex-direction:column;gap:2px}
 .mods div{display:flex;justify-content:space-between;gap:6px}
@@ -187,7 +192,8 @@ kbd{font-family:var(--f-label);border:1px solid var(--line);border-bottom-width:
     </div>
     <div id="help">
       <span class="label">操作</span><br>
-      左键拖动算子：移动（落下时吸附到格中心）<br>
+      左键拖动算子：移动（落下时吸附到格中心）；举起时青色轮廓是本阶段可移动范围<br>
+      鼠标移到一叠算子上：查看这一格堆叠的全部算子<br>
       左键拖动桌面：平移 · 右键拖动：旋转视角 · 滚轮：缩放<br>
       点选算子后：<kbd>F</kbd> 翻面 · <kbd>X</kbd> 移入损失盒 · <kbd>A</kbd>/<kbd>D</kbd> 设为攻方/守方
     </div>
@@ -219,7 +225,7 @@ kbd{font-family:var(--f-label);border:1px solid var(--line);border-bottom-width:
           <span class="hint">攻方额外修正</span><span class="stepper"><button class="btn" data-step="att" data-d="-1">−</button><output id="attExtra">0</output><button class="btn" data-step="att" data-d="1">+</button></span>
           <span class="hint">守方额外修正</span><span class="stepper"><button class="btn" data-step="def" data-d="-1">−</button><output id="defExtra">0</output><button class="btn" data-step="def" data-d="1">+</button></span>
         </div>
-        <label class="hint row" id="obsRow" hidden><input type="checkbox" id="obsAdj"> 观察哨与目标相邻（炮击骰 +1）</label>
+        <div class="row" id="cmpRow" hidden></div>
         <div class="row"><button class="btn primary" id="rollCombat" disabled>掷骰结算</button><button class="btn" id="swapBtn">交换</button><button class="btn" id="clearBtn">清空</button></div>
         <div id="result" hidden></div>
       </div>

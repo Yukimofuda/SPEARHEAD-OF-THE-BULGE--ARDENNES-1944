@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as CANNON from 'cannon-es';
 import { initRules } from './rules.js';
 import { initBook } from './rulebook.js';
+import { initMove } from './move.js';
 
 const $ = (s) => document.querySelector(s);
 const loadMsg = (t) => { $('#loadMsg').textContent = t; };
@@ -204,6 +205,14 @@ function drawSymbol(g, sym, x, y, w, h) {
     case 'flak': oval(); g.beginPath(); g.arc(cx, cy, w * 0.33, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); break;
     case 'werf': oval(); g.beginPath(); g.moveTo(cx - 14, cy + 6); g.lineTo(cx, cy - 10); g.lineTo(cx + 14, cy + 6); g.moveTo(cx - 14, cy + 14); g.lineTo(cx, cy - 2); g.lineTo(cx + 14, cy + 14); g.stroke(); break;
     case 'sof': g.beginPath(); g.moveTo(x, y + h); g.lineTo(x + w, y); g.stroke(); txt('SOF', 20); break;
+    case 'air': { // 俯视的战斗机剪影
+      g.beginPath();
+      g.moveTo(cx, y + 8); g.lineTo(cx + 5, y + 18); g.lineTo(cx + 5, cy - 6); g.lineTo(cx + w * 0.42, cy + 2); g.lineTo(cx + w * 0.42, cy + 9);
+      g.lineTo(cx + 5, cy + 6); g.lineTo(cx + 4, y + h - 18); g.lineTo(cx + 16, y + h - 10); g.lineTo(cx + 16, y + h - 5); g.lineTo(cx, y + h - 9);
+      g.lineTo(cx - 16, y + h - 5); g.lineTo(cx - 16, y + h - 10); g.lineTo(cx - 4, y + h - 18); g.lineTo(cx - 5, cy + 6); g.lineTo(cx - w * 0.42, cy + 9);
+      g.lineTo(cx - w * 0.42, cy + 2); g.lineTo(cx - 5, cy - 6); g.lineTo(cx - 5, y + 18); g.closePath(); g.fill();
+      break;
+    }
   }
 }
 function counterFace(u, reduced) {
@@ -219,7 +228,7 @@ function counterFace(u, reduced) {
     g.font = '600 15px "Saira Condensed",sans-serif'; g.fillText(u.label, W / 2, 156);
     g.save(); g.translate(40, 92); g.rotate(-Math.PI / 2); g.font = '700 21px "Saira Condensed",sans-serif'; g.fillText(u.side_label, 0, 0); g.restore();
     const s = reduced ? u.red : u.full;
-    const v = u.kind === 'hq' ? `(${u.cmp})-${s[2]}-${s[3]}` : s.join('-');
+    const v = u.kind === 'hq' ? `(${u.cmp})-${s[2]}-${s[3]}` : u.kind === 'air' ? 'AIR' : s.join('-');
     g.fillStyle = reduced ? c.txtRed : c.txtFull; g.font = '700 54px "Saira Condensed",sans-serif';
     g.fillText(v, W / 2, H * 0.66 + 62);
     g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 4; g.strokeRect(2, 2, W - 4, H - 4);
@@ -234,12 +243,22 @@ const MARKERS = {
   B: { name: '炸桥', color: '#b8322b', ink: '#fff', text: '炸桥' },
   W: { name: '浮桥', color: '#3f78ad', ink: '#fff', text: '浮桥' },
   CU: { name: '美军控制', color: '#8d9562', ink: '#fff', text: '★' },
-  CG: { name: '德军控制', color: '#1b1b1b', ink: '#fff', text: '✠' },
+  CG: { name: '德军控制', color: '#8e8e8a', ink: '#fff', text: '' },
 };
+// 灰底黑盘、白边黑色铁十字（Balkenkreuz）
+function drawIronCross(g) {
+  g.fillStyle = '#8e8e8a'; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = '#d9d9d4'; g.beginPath(); g.arc(64, 64, 60, 0, 7); g.fill();
+  g.fillStyle = '#1e1e1e'; g.beginPath(); g.arc(64, 64, 50, 0, 7); g.fill();
+  const bar = (w, l) => { g.fillRect(64 - w / 2, 64 - l / 2, w, l); g.fillRect(64 - l / 2, 64 - w / 2, l, w); };
+  g.fillStyle = '#f2f2ee'; bar(26, 70);
+  g.fillStyle = '#141414'; bar(14, 62);
+}
 const markerTexCache = {};
 function markerTex(type) {
   if (markerTexCache[type]) return markerTexCache[type];
   const m = MARKERS[type];
+  if (type === 'CG') return (markerTexCache[type] = canvasTex(128, 128, drawIronCross));
   return (markerTexCache[type] = canvasTex(128, 128, (g, W, H) => {
     g.fillStyle = m.color; g.fillRect(0, 0, W, H);
     g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 6; g.beginPath(); g.arc(64, 64, 56, 0, 7); g.stroke();
@@ -262,9 +281,9 @@ function makeUnit(u) {
   // 底面贴图在翻面后需要正向显示：BoxGeometry 的 -Y 面绕 X 轴翻转后方向一致
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(CW, CH, CW), mats);
   mesh.castShadow = mesh.receiveShadow = true;
-  const body = new CANNON.Body({ mass: 0.4, material: matPiece, shape: new CANNON.Box(new CANNON.Vec3(CW / 2, CH / 2, CW / 2)),
-    linearDamping: 0.4, angularDamping: 0.8, sleepSpeedLimit: 0.6, sleepTimeLimit: 0.3 });
-  const p = { id: u.id, kind: 'unit', u, mesh, body, flip: false, dmg: 0, tx: 0, tz: 0 };
+  // 算子与标记一样不受重力：高度由 restack() 按堆叠顺序算好，叠在一起也不会互相顶着发抖；骰子仍然能撞上它们
+  const body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, material: matPiece, shape: new CANNON.Box(new CANNON.Vec3(CW / 2, CH / 2, CW / 2)) });
+  const p = { id: u.id, kind: 'unit', u, mesh, body, flip: false, dmg: 0, tx: 0, tz: 0, ty: 0.04 + CH / 2, ord: 0, placed: false };
   mesh.userData.piece = p;
   scene.add(mesh); world.addBody(body); pickables.push(mesh); pieces.set(u.id, p);
   return p;
@@ -288,58 +307,57 @@ function removePiece(p) {
   if (selected === p) select(null);
   if (p.kind === 'marker') restack(p.tx, p.tz);
 }
-// 重新计算 (x,z) 处标记的高度：叠在该格全部算子之上，按放置先后排列
+// (x,z) 处的一叠：战斗单位在下，指挥部在上，标记最上，同类按放下的先后
+const stackRank = (q) => (q.kind === 'marker' ? 2 : q.u.kind === 'hq' ? 1 : 0);
+function stackAt(x, z) {
+  return [...pieces.values()].filter((q) => q.kind !== 'die' && Math.hypot(q.tx - x, q.tz - z) < 0.55)
+    .sort((a, b) => stackRank(a) - stackRank(b) || a.ord - b.ord);
+}
+// 重新计算 (x,z) 处每个棋子的高度
 function restack(x, z) {
-  const near = (q) => Math.hypot(q.tx - x, q.tz - z) < 0.55;
-  const units = [...pieces.values()].filter((q) => q.kind === 'unit' && near(q));
-  const marks = [...pieces.values()].filter((q) => q.kind === 'marker' && near(q)).sort((a, b) => a.ord - b.ord);
-  const top = 0.04 + units.length * CH;
-  marks.forEach((m, i) => { m.ty = top + 0.1 + i * 0.205; });
+  let y = 0.04;
+  for (const q of stackAt(x, z)) {
+    if (q.kind === 'marker') { q.ty = y + 0.1; y += 0.205; } else { q.ty = y + CH / 2; y += CH; }
+  }
 }
 for (const u of D.units) makeUnit(u);
 
-function stackHeight(x, z, except) {
-  let n = 0;
-  for (const p of pieces.values()) if (p !== except && p.kind !== 'die' && Math.hypot(p.tx - x, p.tz - z) < 0.55) n++;
-  return n;
-}
-// 叠在 p 上面的标记（随 p 一起移动）
+// 跟着 p 一起移动的：单位身上的疲劳/压制/断补标记，以及同格的己方指挥部（格子上的工事、控制、桥梁标记留在原地）
+const UNIT_MARKS = new Set(['F', 'P', 'S']);
 function riders(p) {
-  if (p.kind !== 'unit') return [];
-  return [...pieces.values()].filter((q) => q.kind === 'marker' && Math.hypot(q.tx - p.tx, q.tz - p.tz) < 0.55).sort((a, b) => a.ord - b.ord);
+  if (p.kind !== 'unit' || p.u.kind === 'hq' || p.u.kind === 'air') return [];
+  return stackAt(p.tx, p.tz).filter((q) => q !== p &&
+    ((q.kind === 'marker' && UNIT_MARKS.has(q.type)) || (q.kind === 'unit' && q.u.kind === 'hq' && q.u.side === p.u.side)));
+}
+// 拖动时 riders 叠在 p 上方的高度
+function riderHeights(base, list) {
+  let y = base + CH / 2;
+  return list.map((r) => { if (r.kind === 'marker') { y += 0.205; return y - 0.105; } y += CH; return y - CH / 2; });
 }
 // 某处的棋子离开后，唤醒附近静止（休眠）的棋子，让它们自然落下
 function wakeAround(x, z) {
   for (const q of pieces.values()) if (q.body.type === CANNON.Body.DYNAMIC && Math.hypot(q.body.position.x - x, q.body.position.z - z) < 1.2) q.body.wakeUp();
 }
-// 把棋子放到 (x,z)：动态落下
+// 把棋子放到 (x,z)：落到这一叠的顶上（高度在主循环里缓动到 ty）
 function settle(p, x, z, flip = p.flip) {
-  const ox = p.tx, oz = p.tz;
-  if (p.kind === 'marker') {
-    p.tx = x; p.tz = z;
-    const b = p.body;
-    b.type = CANNON.Body.KINEMATIC; b.collisionResponse = true;
-    b.velocity.setZero(); b.angularVelocity.setZero(); b.quaternion.copy(QUP);
-    b.position.x = x; b.position.z = z;
-    restack(x, z); if (Math.hypot(ox - x, oz - z) > 0.05) restack(ox, oz);
-    return;
-  }
-  const n = stackHeight(x, z, p);
-  p.tx = x; p.tz = z; p.flip = flip;
+  const ox = p.tx, oz = p.tz, first = !p.placed, moved = first || Math.hypot(ox - x, oz - z) > 0.05;
+  if (moved && !(first && p.kind === 'marker')) p.ord = Date.now() + Math.random();
+  p.placed = true; p.tx = x; p.tz = z;
+  if (p.kind === 'unit') p.flip = flip;
   const b = p.body;
-  b.type = CANNON.Body.DYNAMIC; b.collisionResponse = true;
-  b.position.set(x, 0.3 + n * 0.3, z);
-  b.quaternion.copy(flip ? QFLIP : QUP);
+  b.type = CANNON.Body.KINEMATIC; b.collisionResponse = true;
   b.velocity.setZero(); b.angularVelocity.setZero();
-  b.wakeUp();
+  b.quaternion.copy(p.kind === 'unit' && flip ? QFLIP : QUP);
+  b.position.x = x; b.position.z = z;
+  restack(x, z); if (moved) restack(ox, oz);
+  if (first && p.kind === 'unit') b.position.y = p.ty;
   wakeAround(x, z);
-  restack(x, z); if (Math.hypot(ox - x, oz - z) > 0.05) restack(ox, oz);
 }
 // 动画移动（远端更新、翻面）：抬起→平移/翻转→落下
 const tweens = new Map();
 function animateTo(p, x, z, flip = p.flip, dur = 380, carry = false) {
   const b = p.body;
-  if (carry) riders(p).forEach((r, i) => { r.tx = x; r.tz = z; animateTo(r, x, z, false, dur + 140 + i * 60); });
+  if (carry) riders(p).forEach((r, i) => animateTo(r, x, z, r.kind === 'unit' ? r.flip : false, dur + 140 + i * 60));
   wakeAround(b.position.x, b.position.z);
   b.type = CANNON.Body.KINEMATIC; b.collisionResponse = false;
   b.velocity.setZero(); b.angularVelocity.setZero();
@@ -441,7 +459,10 @@ function rollDice(styles, params = throwParams(styles.length), faces = null) {
 const OBJ = D.objectives;                        // hexId -> VP
 const tableId = (/^#[A-Za-z0-9_-]{1,16}$/.test(location.hash) ? location.hash.slice(1) : null) || 'main';
 $('#tableId').value = tableId;
-const st = { units: {}, markers: {}, turn: 1, phase: 0, weather: '浓雾/暴雪', ctrl: {}, log: [] };
+// fuel: 燃油危机发生的回合；g150: 150 装甲旅伪装已解除；m10: 705 坦歼营已进攻过；air: 本回合已空袭；
+// hits: 本阶段谁进攻过谁；cmp: 本回合已用的指挥点；mv: 单位最近一次移动的阶段序号（回合×6+阶段）
+const EXTRA_KEYS = ['fuel', 'g150', 'm10', 'air', 'hits', 'cmp', 'mv'];
+const st = { units: {}, markers: {}, turn: 1, phase: 0, weather: '浓雾/暴雪', ctrl: {}, log: [], fuel: 0, g150: 0, m10: 0, air: 0, hits: { k: '', s: '{}' }, cmp: { t: 0, s: '{}' }, mv: {} };
 for (const id of Object.keys(OBJ)) st.ctrl[id] = 'US';
 let db = null, docRef = null, docExists = false, pending = {}, writing = false, flushTimer = 0, gotFirst = false, unsub = null, readOnly = false;
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
@@ -507,6 +528,9 @@ function applyState(remote, instant = false) {
     if (!moved) continue;
     if (instant) settle(p, s.x, s.z, !!s.f); else animateTo(p, s.x, s.z, !!s.f);
   }
+  // 旧存档里没有的算子（例如后来加入的 P-47）放到剧本位置
+  const missing = [...pieces.values()].filter((p) => p.kind === 'unit' && !p.placed && !(remote.units || {})[p.id]);
+  if (missing.length) { const def = scenarioState().units; for (const p of missing) { const s = def[p.id]; if (s) settle(p, s.x, s.z, !!s.f); } }
   for (const [id, s] of Object.entries(remote.markers || {})) {
     let p = pieces.get(id);
     if (!s) { if (p) removePiece(p); continue; }
@@ -539,15 +563,19 @@ function scenarioState() {
     const [x, z] = trayGrid('reinfUS', r++, 7); units[uid] = { x, z, f: 0, d: 0 };
   }
   units.USHQ = { ...units.USCCB };
+  { const [x, z] = trayGrid('reinfUS', r, 7); units.USP47 = { x, z, f: 0, d: 0 }; }
   ['GFj5', 'GFj9'].forEach((uid, i) => { const [x, z] = trayGrid('fsch', i, 5); units[uid] = { x, z, f: 1, d: 1 }; });
   const ctrl = {}; for (const id of Object.keys(OBJ)) ctrl[id] = 'US';
-  return { units, markers: {}, turn: 1, phase: 0, weather: '浓雾/暴雪', ctrl };
+  return { units, markers: {}, turn: 1, phase: 0, weather: '浓雾/暴雪', ctrl, fuel: 0, g150: 0, m10: 0, air: 0, hits: { k: '', s: '{}' }, cmp: { t: 0, s: '{}' }, mv: {} };
 }
 function resetGame() {
   const s = scenarioState();
   const nullMarkers = {}; for (const id of Object.keys(st.markers)) nullMarkers[id] = null;
+  const nullMv = {}; for (const id of Object.keys(st.mv || {})) nullMv[id] = null;
   st.units = s.units; st.markers = {}; st.turn = 1; st.phase = 0; st.weather = s.weather; st.ctrl = s.ctrl;
-  pending = {}; commit({ units: s.units, markers: nullMarkers, turn: 1, phase: 0, weather: s.weather, ctrl: s.ctrl });
+  for (const k of EXTRA_KEYS) st[k] = structuredClone(s[k]);
+  pending = {}; commit({ units: s.units, markers: nullMarkers, turn: 1, phase: 0, weather: s.weather, ctrl: s.ctrl,
+    fuel: 0, g150: 0, m10: 0, air: 0, hits: s.hits, cmp: s.cmp, mv: nullMv });
   for (const p of [...pieces.values()]) if (p.kind === 'marker') removePiece(p);
   applyState(st);
   rules.refresh();
@@ -569,15 +597,25 @@ function describe(p) {
   const where = h ? `${h.id} · ${TERRAIN[h.t]}${D.towns[h.id] ? ' · ' + D.towns[h.id][0] : D.villages[h.id] ? ' · ' + D.villages[h.id] : ''}` : (trayAt(p.tx, p.tz) ? TRAYS[trayAt(p.tx, p.tz)].name : '桌面');
   if (p.kind === 'die') return `<b>${DIE_NAME[p.style]}</b><br><span class="hint">点一下投掷 · 按住拖动</span>`;
   if (p.kind === 'marker') return `<b>${MARKERS[p.type].name}标记</b><br><span class="hint">${where}</span>`;
-  const u = p.u, s = p.flip ? u.red : u.full;
-  const val = u.kind === 'hq' ? `(${u.cmp})-${s[2]}-${s[3]}` : s.join('-');
-  return `<b>${u.name}</b> <span class="hint">${p.flip ? '损伤面' : '完好面'}${p.dmg ? ` · 损伤 ${p.dmg}/${u.hp}` : ''}</span><br>
-    <span class="num">${val}</span> <span class="hint">${u.kind === 'hq' ? 'CMP-MP-R' : 'A-D-MP-R'}</span><br>
+  const u = p.u;
+  return `<b>${u.name}</b> <span class="hint">${u.kind === 'air' ? '' : p.flip ? '损伤面' : '完好面'}${p.dmg ? ` · 损伤 ${p.dmg}/${u.hp}` : ''}</span><br>
+    ${u.kind === 'air' ? '' : `<span class="num">${unitVal(p)}</span> <span class="hint">${u.kind === 'hq' ? 'CMP-MP-R' : 'A-D-MP-R'}</span><br>`}
     <span class="hint">${where}</span>${u.rule ? `<br>${u.rule}` : ''}`;
+}
+function unitVal(p) { const u = p.u, s = p.flip ? u.red : u.full; return u.kind === 'hq' ? `(${u.cmp})-${s[2]}-${s[3]}` : s.join('-'); }
+// 悬停在一叠上时，列出这一格的全部算子与标记（从上到下）
+function describeStack(p) {
+  if (p.kind === 'die') return describe(p);
+  const list = stackAt(p.tx, p.tz);
+  if (list.length < 2) return describe(p);
+  const rows = [...list].reverse().map((q) => q.kind === 'marker'
+    ? `<span>· ${MARKERS[q.type].name}标记</span>`
+    : `<span>· <b>${q.u.name}</b> <span class="num">${q.u.kind === 'air' ? '' : unitVal(q)}</span>${q.flip && q.u.kind !== 'air' ? ' <span class="hint">损伤面</span>' : ''}</span>`);
+  return describe(p) + `<div class="stk"><span class="label">本格堆叠 ${list.length} 个（从上到下）</span>${rows.join('')}</div>`;
 }
 function showCard(p, e) {
   if (!p) { card.hidden = true; return; }
-  card.innerHTML = describe(p); card.hidden = false;
+  card.innerHTML = describeStack(p); card.hidden = false;
   const x = Math.min(e.clientX + 16, innerWidth - 270), y = Math.min(e.clientY + 16, innerHeight - card.offsetHeight - 10);
   card.style.left = x + 'px'; card.style.top = y + 'px';
 }
@@ -590,7 +628,9 @@ function select(p) {
   bar.replaceChildren();
   const add = (label, fn, cls = '') => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = label; b.onclick = fn; bar.append(b); };
   const name = document.createElement('span'); name.className = 'chip'; name.textContent = p.kind === 'unit' ? p.u.name : MARKERS[p.type].name + '标记'; bar.append(name);
-  if (p.kind === 'unit') {
+  if (p.kind === 'unit' && p.u.kind === 'air') {
+    const s = document.createElement('span'); s.className = 'hint'; s.textContent = '空袭阶段把它拖到德军单位上即可空袭'; bar.append(s);
+  } else if (p.kind === 'unit') {
     add('翻面 F', () => flipPiece(p));
     add('受 1 点损伤', () => damage(p, 1));
     add('移入损失盒 X', () => eliminate(p));
@@ -605,8 +645,10 @@ function movePiece(p, x, z, flip = p.flip, opts = {}) {
   const h = nearestHex(x, z);
   if (h && !opts.free) { x = h.X; z = h.Z; }
   if (p.kind === 'unit') {
+    const from = nearestHex(p.tx, p.tz);
     commit({ units: { [p.id]: { x: +x.toFixed(2), z: +z.toFixed(2), f: flip ? 1 : 0, d: p.dmg } } });
-    if (h && OBJ[h.id] && p.u.kind !== 'hq' && st.ctrl[h.id] !== p.u.side) {
+    if (h && from?.id !== h.id && !opts.free) commit({ mv: { [p.id]: st.turn * 6 + st.phase } });
+    if (h && OBJ[h.id] && !['hq', 'air'].includes(p.u.kind) && st.ctrl[h.id] !== p.u.side) {
       commit({ ctrl: { [h.id]: p.u.side } });
       log(`${p.u.name} 进入 ${D.towns[h.id][0]}，取得控制`, p.u.side);
       rules.refresh();
@@ -621,6 +663,15 @@ function flipPiece(p) {
   if (p.kind === 'unit') log(`${p.u.name} 翻到${p.flip ? '损伤面' : '完好面'}`, p.u.side);
 }
 function eliminate(p) {
+  // 单位身上的标记一起移除；同格的指挥部移到 3 格内最近的己方战斗单位处，没有就一并消灭
+  const from = pieceHex(p);
+  for (const r of riders(p)) {
+    if (r.kind === 'marker') { commit({ markers: { [r.id]: null } }); removePiece(r); continue; }
+    const host = from && [...pieces.values()].filter((q) => q !== p && q.kind === 'unit' && q.u.side === p.u.side && !['hq', 'air'].includes(q.u.kind) && pieceHex(q) && !trayAt(q.tx, q.tz))
+      .map((q) => [q, hexDist(pieceHex(q), from)]).filter(([, d]) => d <= 3).sort((a, b) => a[1] - b[1])[0]?.[0];
+    if (host) { movePiece(r, host.tx, host.tz, r.flip, { free: true }); animateTo(r, host.tx, host.tz, r.flip, 600); log(`${r.u.name} 失去宿主，移到 ${host.u.name} 处`, r.u.side); }
+    else setTimeout(() => eliminate(r), 50);
+  }
   const key = p.u.side === 'US' ? 'deadUS' : 'deadGE';
   const n = [...pieces.values()].filter((q) => q.kind === 'unit' && trayAt(q.tx, q.tz) === key).length;
   const [x, z] = trayGrid(key, n, 7);
@@ -674,15 +725,17 @@ renderer.domElement.addEventListener('pointermove', (e) => {
       if (drag.p.kind !== 'die') b.quaternion.copy(drag.p.flip ? QFLIP : QUP);
       card.hidden = true;
       drag.riders = riders(drag.p);
-      for (const r of drag.riders) { tweens.delete(r.id); r.body.type = CANNON.Body.KINEMATIC; r.body.collisionResponse = false; r.body.velocity.setZero(); r.body.angularVelocity.setZero(); r.body.quaternion.copy(QUP); }
+      for (const r of drag.riders) { tweens.delete(r.id); r.body.type = CANNON.Body.KINEMATIC; r.body.collisionResponse = false; r.body.velocity.setZero(); r.body.angularVelocity.setZero(); r.body.quaternion.copy(r.kind === 'unit' && r.flip ? QFLIP : QUP); }
+      drag.ry = riderHeights(1.6, drag.riders);
       wakeAround(b.position.x, b.position.z);
+      if (drag.p.kind === 'unit') drag.range = showRange(drag.p);
     }
     if (drag.moved) {
       const hp = hitPlane(e, 1.6);
       if (hp && drag.p.kind === 'die') { drag.p.body.position.set(hp.x + drag.ox, 2.2, hp.z + drag.oz); }
       else if (hp) {
         drag.p.body.position.set(hp.x + drag.ox, 1.6, hp.z + drag.oz);
-        (drag.riders || []).forEach((r, i) => r.body.position.set(hp.x + drag.ox, 1.6 + CH / 2 + 0.1 + i * 0.21, hp.z + drag.oz));
+        (drag.riders || []).forEach((r, i) => r.body.position.set(hp.x + drag.ox, drag.ry[i], hp.z + drag.oz));
         const h = nearestHex(hp.x + drag.ox, hp.z + drag.oz);
         hoverHex.visible = !!h; if (h) hoverHex.position.set(h.X, 0.06, h.Z);
         presence({ drag: { id: drag.p.id, x: +(hp.x + drag.ox).toFixed(2), z: +(hp.z + drag.oz).toFixed(2), f: drag.p.flip ? 1 : 0 } });
@@ -706,25 +759,85 @@ function endDrag(e) {
     d.p.tx = b.position.x; d.p.tz = b.position.z;
     return;
   }
+  hideRange();
   if (!d.moved) { select(d.p); return; }
-  const [x, z] = movePiece(d.p, b.position.x, b.position.z, d.p.flip, { free: !nearestHex(b.position.x, b.position.z) });
-  b.type = CANNON.Body.KINEMATIC;
-  tweens.set(d.p.id, { p: d.p, x0: b.position.x, z0: b.position.z, y0: b.position.y, x, z,
-    q0: new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w),
-    q1: new THREE.Quaternion().setFromEuler(new THREE.Euler(d.p.flip ? Math.PI : 0, 0, 0)), flip: d.p.flip, t0: performance.now(), dur: 120 });
   presence({ drag: null });
-  (d.riders || []).forEach((r, i) => {
-    movePiece(r, x, z, false, { free: true });
-    const rb = r.body;
-    tweens.set(r.id, { p: r, x0: rb.position.x, z0: rb.position.z, y0: rb.position.y, x, z, q0: new THREE.Quaternion(), q1: new THREE.Quaternion(), flip: false, t0: performance.now(), dur: 220 + i * 60 });
-  });
+  const h0 = nearestHex(b.position.x, b.position.z), from = pieceHex(d.p);
+  const why = d.p.kind === 'unit' && h0 && h0.id !== from?.id ? stackProblem(d.p, h0) : null;
+  if (why) { toast(why); dropTo(d, d.p.tx, d.p.tz, false); select(d.p); return; }
+  const [x, z] = movePiece(d.p, b.position.x, b.position.z, d.p.flip, { free: !h0 });
+  dropTo(d, x, z, true);
   if (d.p.kind === 'unit') {
-    const h = nearestHex(x, z), tr = trayAt(x, z);
-    log(`${d.p.u.name} → ${h ? h.id + (D.towns[h.id] ? ' ' + D.towns[h.id][0] : '') : tr ? TRAYS[tr].name : '桌面'}`, d.p.u.side);
+    const h = nearestHex(x, z), tr = trayAt(x, z), u = d.p.u;
+    log(`${u.name} → ${h ? h.id + (D.towns[h.id] ? ' ' + D.towns[h.id][0] : '') : tr ? TRAYS[tr].name : '桌面'}`, u.side);
     if (tr === 'deadUS' || tr === 'deadGE' || tr === 'exitGE') rules.refresh();
+    const myPhase = (st.phase === 2 && u.side === 'US') || (st.phase === 3 && u.side === 'GE');
+    if (u.kind === 'air' && h) {
+      const target = stackAt(h.X, h.Z).find((q) => q.kind === 'unit' && q.u.side === 'GE' && !['hq', 'air'].includes(q.u.kind));
+      rules.airStrike(target).then((msg) => {
+        if (msg) toast(msg);
+        setTimeout(() => { const s = scenarioState().units.USP47; movePiece(d.p, s.x, s.z, false, { free: true }); animateTo(d.p, s.x, s.z, false, 600); }, msg ? 300 : 1400);
+      });
+    } else if (myPhase && h && h.id !== from?.id && d.range && !d.range.hexes.has(h.id)) toast('超出本阶段的可移动范围');
   }
   select(d.p);
 }
+// 落下：棋子和随行的标记/指挥部一起缓动到 (x,z)；commitRiders 为 false 时是退回原位
+function dropTo(d, x, z, commitRiders) {
+  const b = d.p.body, now = performance.now();
+  b.type = CANNON.Body.KINEMATIC;
+  const qOf = (q) => new THREE.Quaternion().setFromEuler(new THREE.Euler(q.kind === 'unit' && q.flip ? Math.PI : 0, 0, 0));
+  tweens.set(d.p.id, { p: d.p, x0: b.position.x, z0: b.position.z, y0: b.position.y, x, z,
+    q0: new THREE.Quaternion(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w), q1: qOf(d.p), flip: d.p.flip, t0: now, dur: 120 });
+  (d.riders || []).forEach((r, i) => {
+    if (commitRiders) movePiece(r, x, z, r.kind === 'unit' ? r.flip : false, { free: true });
+    const rb = r.body;
+    tweens.set(r.id, { p: r, x0: rb.position.x, z0: rb.position.z, y0: rb.position.y, x, z, q0: qOf(r), q1: qOf(r), flip: r.kind === 'unit' ? r.flip : false, t0: now, dur: 220 + i * 60 });
+  });
+}
+// 堆叠规则：每格最多 1 个战斗单位，另外可以有任意数量的己方指挥部；指挥部必须和己方战斗单位同格
+function stackProblem(p, h) {
+  if (p.u.kind === 'air') return null;
+  const combat = stackAt(h.X, h.Z).filter((q) => q.kind === 'unit' && q !== p && !['hq', 'air'].includes(q.u.kind));
+  if (p.u.kind === 'hq') return combat.some((q) => q.u.side === p.u.side) ? null : '指挥部必须和一个己方战斗单位同格';
+  if (combat.some((q) => q.u.side !== p.u.side)) return '不能进入敌方单位所在格';
+  if (combat.length) return '每格最多 1 个战斗单位（另外可以有任意数量的己方指挥部）；移动中可以穿过友军格，但不能停在那里';
+  return null;
+}
+
+// ------------------------------------------------------------------ 移动范围（举起算子时显示外轮廓）
+const mover = initMove({ D, HEX, RIVER, BRIDGE, hexDist });
+const rangeMat = new THREE.MeshBasicMaterial({ color: '#38c9dc', transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
+let rangeMesh = null;
+function markerOnHex(hid, type) {
+  const h = HEX.get(hid);
+  return !!h && [...pieces.values()].some((q) => q.kind === 'marker' && q.type === type && Math.hypot(q.tx - h.X, q.tz - h.Z) < 0.55);
+}
+function moveCtx() {
+  const units = [];
+  for (const q of pieces.values()) if (q.kind === 'unit' && q.u.kind !== 'air') { const h = nearestHex(q.tx, q.tz); if (h) units.push({ p: q, hex: h }); }
+  return { units, hexOf: (q) => nearestHex(q.tx, q.tz), inTray: (q) => trayAt(q.tx, q.tz), mark: markerOnHex,
+    turn: st.turn, phase: st.phase, fuel: st.fuel, disguised: !st.g150 && st.turn <= 2 };
+}
+function showRange(p) {
+  hideRange();
+  const r = mover.range(p, moveCtx());
+  if (!r.hexes.size) { if (r.note) toast(r.note); return r; }
+  const pos = [];
+  for (const [X, Z, a0, a1, R] of mover.outline(r.hexes)) {
+    const o = R * 0.975, i = R * 0.85, y = 0.075;
+    const P = (rad, a) => [X + rad * Math.cos(a), y, Z + rad * Math.sin(a)];
+    const A = P(o, a0), B = P(o, a1), C = P(i, a1), E = P(i, a0);
+    pos.push(...A, ...B, ...C, ...A, ...C, ...E);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  rangeMesh = new THREE.Mesh(g, rangeMat); rangeMesh.renderOrder = 2;
+  scene.add(rangeMesh);
+  toast('可移动范围 · ' + r.note);
+  return r;
+}
+function hideRange() { if (rangeMesh) { scene.remove(rangeMesh); rangeMesh.geometry.dispose(); rangeMesh = null; } }
 renderer.domElement.addEventListener('pointerup', endDrag);
 renderer.domElement.addEventListener('pointercancel', endDrag);
 addEventListener('keydown', (e) => {
@@ -805,7 +918,7 @@ function emit(topic, data) { if (gameRoom) gameRoom.emit(topic, data).catch(() =
 // ------------------------------------------------------------------ 规则模块
 const rules = initRules({
   D, HEX, UNIT, RIVER, BRIDGE, OBJ, TRAYS, TERRAIN, st, pieces, hexDist, nearestHex, trayAt, pieceHex,
-  commit, log, damage, eliminate, placeMarker, flipPiece, select,
+  commit, log, damage, eliminate, placeMarker, flipPiece, select, selectedUnit: () => (selected?.kind === 'unit' ? selected : null),
   rollDice: async (styles, label) => {
     styles = styles.map((s, i) => (s === 'free' ? ['att', 'def'][i % 2] : s));
     const params = throwParams(styles.length);
@@ -875,7 +988,7 @@ function frame(now) {
   runTweens(now);
   world.step(1 / 120, dt, 8);
   for (const p of pieces.values()) {
-    if (p.kind === 'marker' && !tweens.has(p.id) && drag?.p !== p && !(drag?.riders || []).includes(p) && !remoteHeld.has(p.id)) {
+    if (!tweens.has(p.id) && drag?.p !== p && !(drag?.riders || []).includes(p) && !remoteHeld.has(p.id)) {
       const b = p.body; b.position.y += (p.ty - b.position.y) * Math.min(1, dt * 14);
     }
     p.mesh.position.copy(p.body.position); p.mesh.quaternion.copy(p.body.quaternion);
@@ -922,7 +1035,7 @@ setSync('warn', '本地模式（未联机）');
       docExists = true;
       const data = snap.data();
       if (snap.metadata.hasPendingWrites) return;
-      for (const k of ['turn', 'phase', 'weather']) if (data[k] !== undefined) st[k] = data[k];
+      for (const k of ['turn', 'phase', 'weather', ...EXTRA_KEYS]) if (data[k] !== undefined) st[k] = structuredClone(data[k]);
       st.ctrl = { ...st.ctrl, ...(data.ctrl || {}) };
       st.log = Array.isArray(data.log) ? data.log : st.log;
       st.units = structuredClone(data.units || {});
