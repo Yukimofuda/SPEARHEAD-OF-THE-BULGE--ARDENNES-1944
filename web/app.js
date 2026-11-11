@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import * as CANNON from 'cannon-es';
-import { initRules } from './rules.js';
-import { initBook } from './rulebook.js';
-import { initMove } from './move.js';
+import { initRules } from './rules.js?v=20261111b';
+import { initBook } from './rulebook.js?v=20261111b';
+import { initMove } from './move.js?v=20261111b';
 
 const $ = (s) => document.querySelector(s);
 const loadMsg = (t) => { $('#loadMsg').textContent = t; };
@@ -397,9 +397,22 @@ function removePiece(p) {
 }
 // (x,z) 处的一叠：战斗单位在下，指挥部在上，标记最上，同类按放下的先后
 const stackRank = (q) => (q.kind === 'marker' ? 2 : q.u.kind === 'hq' ? 1 : 0);
+// 算子边长 1.5（半对角线约 1.06）、标记直径 1.24：中心相距 1.7 以内在桌面上就会压在一起，都算同一叠。
+// 地图上的棋子都吸附在格中心，相邻格相距 1.85；盒子里的摆放间距 2.1 以上，所以不会把两格误算成一叠。
+const STACK_R = 1.7;
 function stackAt(x, z) {
-  return [...pieces.values()].filter((q) => q.kind !== 'die' && Math.hypot(q.tx - x, q.tz - z) < 0.55)
+  return [...pieces.values()].filter((q) => q.kind !== 'die' && Math.hypot(q.tx - x, q.tz - z) < STACK_R)
     .sort((a, b) => stackRank(a) - stackRank(b) || a.ord - b.ord);
+}
+// 不在六角格上（盒子、桌面）落下时，贴到压住的那一叠的中心，免得半压在别的棋子上
+function snapToStack(p, x, z, skip) {
+  let best = null, bd = STACK_R;
+  for (const q of pieces.values()) {
+    if (q === p || q.kind === 'die' || skip.includes(q)) continue;
+    const d = Math.hypot(q.tx - x, q.tz - z);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best ? [best.tx, best.tz] : [x, z];
 }
 // 重新计算 (x,z) 处每个棋子的高度
 function restack(x, z) {
@@ -898,7 +911,8 @@ function endDrag(e) {
   }
   const why = d.p.kind === 'unit' && h0 && h0.id !== from?.id ? stackProblem(d.p, h0) : null;
   if (why) return back(why);
-  const [x, z] = movePiece(d.p, b.position.x, b.position.z, d.p.flip, { free: !h0 });
+  const [fx, fz] = h0 ? [b.position.x, b.position.z] : snapToStack(d.p, b.position.x, b.position.z, d.riders || []);
+  const [x, z] = movePiece(d.p, fx, fz, d.p.flip, { free: !h0 });
   dropTo(d, x, z, true);
   if (d.p.kind === 'unit') {
     const h = nearestHex(x, z), tr = trayAt(x, z), u = d.p.u;
