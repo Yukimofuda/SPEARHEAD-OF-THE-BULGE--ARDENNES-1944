@@ -30,10 +30,11 @@ export function initMove({ D, HEX, RIVER, BRIDGE, hexDist }) {
     if (fromTray && ctx.turn < 4) return { hexes: new Set(), note: '美军增援第 4 回合起才能进场' };
     if (side === 'US' && ctx.turn === 1) return { hexes: new Set(), note: '第 1 回合美军不能移动' };
     if (here && ctx.mark(here.id, 'P')) return { hexes: new Set(), note: '被压制：本回合不能移动' };
+    if (ctx.attacked && ctx.attacked(p)) return { hexes: new Set(), note: '本阶段已经进攻过，不能再移动' };
 
     const s = p.flip ? u.red : u.full;
     let mp = s[2], full = true, notes = [];
-    if (here && ctx.mark(here.id, 'F')) { mp = Math.max(1, mp - 1); full = false; notes.push('疲劳 MP−1'); }
+    if (here && (ctx.mark(here.id, 'F') || ctx.mark(here.id, 'S'))) { mp = Math.max(1, mp - 1); full = false; notes.push(ctx.mark(here.id, 'S') ? '断补 MP−1' : '疲劳 MP−1'); }
     if (u.tags.includes('peiper') && (u.kind === 'armor' || u.kind === 'mech') && ctx.fuel === ctx.turn) { mp = Math.floor(mp / 2); full = false; notes.push('燃油危机 MP 减半'); }
     if (here && u.id !== 'USCCB') {
       const ccb = ctx.units.find((o) => o.p.u.id === 'USCCB' && side === 'US' && hexDist(o.hex, here) === 1);
@@ -98,14 +99,17 @@ export function initMove({ D, HEX, RIVER, BRIDGE, hexDist }) {
       notes.push('沿道路 MP+2');
     }
     const hexes = new Set();
+    const cur = ctx.cur ? ctx.cur(p) : here;
+    let exitW = !!here && here.c === 0;
+    for (const [id, c] of reach) if (HEX.get(id).c === 0 && c <= mp - 0.5 + 1e-9) exitW = true;
     for (const id of reach.keys()) {
-      if (here && id === here.id) continue;
+      if (cur && id === cur.id) continue;
       if (u.kind === 'hq') { const o = occ.get(id); if (o && o.u.side === side) hexes.add(id); continue; }
       if (occ.has(id)) continue;                            // 不能停在友军战斗单位所在格
       hexes.add(id);
     }
     if (fromTray) { const eh = entryHex[u.id]; if (eh && !occ.has(eh)) hexes.add(eh); }
-    return { hexes, note: `MP ${mp}${notes.length ? '（' + notes.join('，') + '）' : ''}` };
+    return { hexes, exitW, note: `MP ${mp}${notes.length ? '（' + notes.join('，') + '）' : ''}` };
   }
 
   // 一组格子的外轮廓：返回每条外边的两个端点（世界坐标）
@@ -126,5 +130,81 @@ export function initMove({ D, HEX, RIVER, BRIDGE, hexDist }) {
     return segs;
   }
 
-  return { range, outline, NB, ROAD };
+  // 敌方 ZOC 格与全部占位
+  function zones(side, ctx) {
+    const zoc = new Set(), occ = new Map();
+    for (const o of ctx.units) {
+      occ.set(o.hex.id, [...(occ.get(o.hex.id) || []), o.p]);
+      const e = o.p.u;
+      if (e.side === side || e.kind === 'hq' || (e.id === 'G150' && ctx.disguised)) continue;
+      for (const n of NB.get(o.hex.id)) zoc.add(n.id);
+    }
+    return { zoc, occ };
+  }
+  const crossable = (a, b, u, ctx) => {
+    const e = key(a.id, b.id);
+    if (!RIVER.has(e)) return true;
+    if (BRIDGE.has(e) && !(ctx.mark(a.id, 'B') || ctx.mark(b.id, 'B'))) return true;
+    return (ctx.mark(a.id, 'W') || ctx.mark(b.id, 'W')) && !u.tags.includes('heavy');
+  };
+  // 后撤 1 格的合法去处：空格、不与进攻方相邻、不跨无桥的河；只能进敌方 ZOC 时 zocOnly 为真
+  function retreat(p, attHexId, ctx) {
+    const h = ctx.hexOf(p); if (!h) return { hexes: [], zocOnly: false };
+    const { zoc, occ } = zones(p.u.side, ctx), att = attHexId && HEX.get(attHexId);
+    const ok = NB.get(h.id).filter((n) => !(occ.get(n.id) || []).some((q) => q !== p && !(q.u.kind === 'hq' && ctx.hexOf(q)?.id === h.id))
+      && !(att && hexDist(n, att) <= 1) && crossable(h, n, p.u, ctx));
+    const clean = ok.filter((n) => !zoc.has(n.id));
+    return { hexes: (clean.length ? clean : ok).map((n) => n.id), zocOnly: !clean.length && ok.length > 0 };
+  }
+  // 装甲突击：不计地形再走至多 n 格，进入敌方 ZOC 即停
+  function burst(p, n, ctx) {
+    const h = ctx.hexOf(p); if (!h) return [];
+    const { zoc, occ } = zones(p.u.side, ctx), seen = new Map([[h.id, 0]]), q = [h], out = [];
+    while (q.length) {
+      const c = q.shift(), d = seen.get(c.id);
+      if (d >= n || (d > 0 && zoc.has(c.id))) continue;
+      for (const m of NB.get(c.id)) {
+        if (seen.has(m.id) || !crossable(c, m, p.u, ctx)) continue;
+        const o = (occ.get(m.id) || []).filter((x) => x !== p && x.u.kind !== 'hq');
+        if (o.some((x) => x.u.side !== p.u.side)) continue;
+        seen.set(m.id, d + 1); q.push(m);
+        if (!o.length) out.push(m.id);
+      }
+    }
+    return out;
+  }
+  // 补给检查：返回断补的战斗单位。道路格 = 有道路通过的格；补给源 = 己方地图边缘的道路格与己方指挥部所在格
+  const roadNb = new Map();
+  for (const e of ROAD) { const [a, b] = e.split('|'); for (const [x, y] of [[a, b], [b, a]]) roadNb.set(x, [...(roadNb.get(x) || []), y]); }
+  const COLS = Math.max(...[...HEX.values()].map((h) => h.c)), ROWS = Math.max(...[...HEX.values()].map((h) => h.r));
+  const isSource = (h, side) => (side === 'GE' ? h.c === COLS : h.c === 0 || h.r === 0 || h.r === ROWS);
+  function supply(ctx) {
+    const out = [];
+    for (const side of ['US', 'GE']) {
+      const { zoc, occ } = zones(side, ctx);
+      const blocked = (id) => zoc.has(id) || (occ.get(id) || []).some((q) => q.u.side !== side);
+      const net = new Set(), q = [];
+      for (const id of roadNb.keys()) if (isSource(HEX.get(id), side) && !blocked(id)) { net.add(id); q.push(id); }
+      const hqs = ctx.units.filter((o) => o.p.u.kind === 'hq' && o.p.u.side === side).map((o) => o.hex);
+      for (const h of hqs) if (roadNb.has(h.id) && !net.has(h.id)) { net.add(h.id); q.push(h.id); }
+      while (q.length) {
+        const a = q.shift();
+        for (const b of roadNb.get(a) || []) {
+          if (net.has(b) || blocked(b)) continue;
+          const e = key(a, b);
+          if (BRIDGE.has(e) && (ctx.mark(a, 'B') || ctx.mark(b, 'B'))) continue;
+          net.add(b); q.push(b);
+        }
+      }
+      const netHex = [...net].map((id) => HEX.get(id));
+      for (const o of ctx.units) {
+        if (o.p.u.side !== side || o.p.u.kind === 'hq') continue;
+        if (hqs.some((h) => hexDist(h, o.hex) <= 2)) continue;
+        if (!netHex.some((h) => hexDist(h, o.hex) <= 2)) out.push(o.p);
+      }
+    }
+    return out;
+  }
+
+  return { range, outline, retreat, burst, supply, zones, NB, ROAD };
 }
